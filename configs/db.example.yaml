@@ -1,0 +1,14 @@
+
+# PostgreSQL Configuration
+# Copy this file to db.yaml and fill in your details
+host: 10.21.63.200
+port: 5432
+database: parkrun
+user: parkrun
+password: "your_password_here"
+sslmode: prefer
+
+etl:
+  source_dir: ~/Documents/Parkron/Raw2/
+  output_dir: ~/Documents/Parkron/Staged/
+  manifest_file: manifest.yaml
