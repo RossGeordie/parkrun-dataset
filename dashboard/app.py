@@ -1,6 +1,6 @@
 """Dash example for parkron data. Replace with Dash, Streamlit, etc."""
 import dash
-from dash import dcc, html
+from dash import html
 
 app = dash.Dash(__name__)
 
