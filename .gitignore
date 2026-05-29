@@ -1,0 +1,12 @@
+*.pyc
+__pycache__/
+*.xlsx
+*.zip
+*.json
+*mcode.txt
+*.zip
+Raw2/
+.jest/
+*.db
+*.sqlite3
+*.sql
