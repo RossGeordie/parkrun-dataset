@@ -31,5 +31,10 @@ line-length = 120
 target-version = "py311"
 select = ["E", "F", "I", "W"]
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scripts*", "dashboard*"]
+exclude = ["tests*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
