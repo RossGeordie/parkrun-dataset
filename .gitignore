@@ -1,12 +1,24 @@
-*.pyc
-__pycache__/
+# Large data files
 *.xlsx
+*.xls
+*.csv
 *.zip
 *.json
 *mcode.txt
-*.zip
+*.tmdl
+
+# Raw data
 Raw2/
+parkrun_loaded.sql
+Raw2.zip
+
+# Python cache
+*.pyc
+__pycache__/
 .jest/
+
+# Other
 *.db
 *.sqlite3
-*.sql
+.vscode/
+.idea/
