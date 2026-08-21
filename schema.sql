@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS parkrun.parks (
 
 INSERT INTO parkrun.parks (slug, name, city, url) VALUES
   ('jesmonddene', 'Jesmond Dene', 'Newcastle', 'https://www.parkrun.org.uk/jesmonddene/results/'),
-  ('townmoor',    'Town Moor',    'Sheffield', 'https://www.parkrun.org.uk/townmoor/results/'),
-  ('leazes',      'Leazes Park',  'Swansea',   'https://www.parkrun.org.uk/leazes/results/'),
-  ('dentondene',  'Denton Dene',  'Barnsley',  'https://www.parkrun.org.uk/dentondene/results/')
+  ('townmoor',    'Town Moor',    'Newcastle', 'https://www.parkrun.org.uk/townmoor/results/'),
+  ('leazes',      'Leazes Park',  'Newcastle',   'https://www.parkrun.org.uk/leazes/results/'),
+  ('dentondene',  'Denton Dene',  'Newcastle',  'https://www.parkrun.org.uk/dentondene/results/')
 ON CONFLICT (slug) DO NOTHING;
