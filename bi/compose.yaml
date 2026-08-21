@@ -1,0 +1,82 @@
+# parkrun-dataset BI stack — Superset + Metabase
+# Both point their metadata DB at a local postgres; the parkrun data lives in
+# an external PostgreSQL (added per-app in the UI, or via env for seeding).
+#
+#   cp .env.example .env   # then set the *_DB_PASSWORD / SECRET vars
+#   docker compose up -d
+#
+# Ports: Superset 8088, Metabase 3000
+services:
+  superset_db:
+    image: postgres:16-alpine
+    container_name: superset_meta
+    environment:
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: ${SUPERSET_DB_PASSWORD:?set in .env}
+      POSTGRES_DB: superset
+    volumes:
+      - superset_meta:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset -d superset"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  superset:
+    image: apache/superset:latest
+    container_name: superset
+    depends_on:
+      superset_db:
+        condition: service_healthy
+    environment:
+      SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://superset:${SUPERSET_DB_PASSWORD}@superset_db:5432/superset
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?set in .env, any long random string}
+      SUPERSET_LOAD_EXAMPLES: "False"
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-change-me}
+      PG_HOST: ${PG_HOST}
+      PG_PORT: ${PG_PORT:-5432}
+      PG_USER: ${PG_USER}
+      PG_PASSWORD: ${PG_PASSWORD}
+      PG_DATABASE: ${PG_DATABASE:-parkrun}
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./entrypoint.sh:/app/entrypoint.sh:ro
+      - ./seed_bi.py:/app/seed_bi.py:ro
+    restart: unless-stopped
+    entrypoint: ["bash", "/app/entrypoint.sh"]
+
+  metabase_db:
+    image: postgres:16-alpine
+    container_name: metabase_meta
+    environment:
+      POSTGRES_USER: metabase
+      POSTGRES_PASSWORD: ${METABASE_DB_PASSWORD:?set in .env}
+      POSTGRES_DB: metabase
+    volumes:
+      - metabase_meta:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U metabase -d metabase"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase
+    depends_on:
+      metabase_db:
+        condition: service_healthy
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_CONNECTION_URI: postgresql://metabase:${METABASE_DB_PASSWORD}@metabase_db:5432/metabase
+      MB_DB_SETUP_ONCE: "false"
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  superset_meta:
+  metabase_meta:
