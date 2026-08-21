@@ -33,9 +33,9 @@ docs/architecture.md  # data model & scrape flow
 
 Registered in a `parkrun.parks` registry table at start. Current set:
 - `jesmonddene` (Newcastle)
-- `townmoor` (Sheffield)
-- `leazes` (Swansea)
-- `dentondene` (Barnsley)
+- `townmoor` (Newcastle)
+- `leazes` (Newcastle)
+- `dentondene` (Newcastle)
 
 Add new parks at runtime:
 
