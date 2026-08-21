@@ -269,3 +269,91 @@ begin
     execute format('grant select on analytics.%I to reader', r.tablename);
   end loop;
 end$$;
+
+-- ---------------------------------------------------------------------------
+-- rollup_person_anywhere — one row per person.  "Anywhere" streak.
+-- Per-park streak breaks when a person's event_no skips a week AT THAT PARK.
+-- This generalises across parks: a person who runs park A one Saturday and
+-- park B the next still has an unbroken run, because consecutiveness is now
+-- defined on the CALENDAR ISO week attended (any park). All 4 parks run the
+-- same Saturday, so consecutive weeks land on consecutive Mondays.
+-- Consecutive = attended week is exactly 7 days after the previous attended
+-- week; a >7-day jump (or first/last of run) is a break. Multi-park weeks are
+-- deduped to a single attended week. Same gap-method single pass as per-park.
+-- ---------------------------------------------------------------------------
+drop table if exists analytics.rollup_person_anywhere;
+create table analytics.rollup_person_anywhere (
+  parkrun_id                 text not null,
+  name                       text,
+  gender                     text,
+  club                       text,
+  days_run_anywhere          integer,        -- total finish rows, all parks
+  parks_run                  integer,
+  weeks_run_anywhere         integer,        -- distinct ISO weeks with >=1 run
+  first_event_date           date,
+  last_event_date            date,
+  highest_consecutive_anywhere integer,      -- longest unbroken week-run
+  current_consecutive_anywhere integer,      -- unbroken run ending at latest
+  primary key (parkrun_id)
+);
+grant select on analytics.rollup_person_anywhere to reader;
+
+-- ---------------------------------------------------------------------------
+-- rollup_person_dedicated — one row per person.  "Dedicated / committed" run.
+-- Longest run of CONSECUTIVE HELD event-weeks in which the person showed up
+-- (at any of the 4 parks).  A "held event-week" = an ISO week in which at
+-- least one park held a parkrun (distinct event week drawn from
+-- parkrun.event_history).  Because all 4 parks share the same Saturday (they
+-- run on the national calendar), HELD weeks == the parkrun calendar, so this
+-- rewards runners who appeared whenever there was a parkrun to enter.
+--  vs elsewhere:
+--    · per_park  is park-loyal (event_no; breaks on a park hop,
+--                robust to that park's cancellations);
+--    · anywhere  is the strictest (breaks on ANY calendar week, even a
+--                city-wide closure) but park-hop-tolerant;
+--    · dedicated sits between: park-hop-tolerant AND robust to closure weeks,
+--      breaking only on a held week the runner actually missed.
+-- Populated by analytics/refresh.sql (same single-pass gap method).
+-- ---------------------------------------------------------------------------
+drop table if exists analytics.rollup_person_dedicated;
+create table analytics.rollup_person_dedicated (
+  parkrun_id                      text not null,
+  name                            text,
+  gender                          text,
+  club                            text,
+  attended_event_weeks            integer,     -- distinct HELD weeks with >=1 run
+  parks_run                       integer,
+  first_event_date                date,
+  last_event_date                 date,
+  highest_consecutive_dedicated   integer,     -- longest unbroken held-week run
+  current_consecutive_dedicated   integer,     -- unbroken run ending at latest
+  primary key (parkrun_id)
+);
+grant select on analytics.rollup_person_dedicated to reader;
+
+-- ---------------------------------------------------------------------------
+-- v_person_streaks — one selectable dataset for Superset.
+-- All three streak definitions in one grain: (person, streak_type).
+-- park is set for per_park and NULL for the two city-wide variants, so a
+-- dashboard can filter on streak_type and pivot on highest/current freely.
+-- ---------------------------------------------------------------------------
+drop view if exists analytics.v_person_streaks;
+create view analytics.v_person_streaks as
+select 'per_park'   as streak_type, parkrun_id, coalesce(name, '') as name,
+       park, highest_consecutive       as highest,
+       current_consecutive             as current,
+       first_event_date, last_event_date
+from analytics.rollup_person_park
+union all
+select 'dedicated'  as streak_type, parkrun_id, coalesce(name, '') as name,
+       null::text as park, highest_consecutive_dedicated as highest,
+       current_consecutive_dedicated     as current,
+       first_event_date, last_event_date
+from analytics.rollup_person_dedicated
+union all
+select 'anywhere'   as streak_type, parkrun_id, coalesce(name, '') as name,
+       null::text as park, highest_consecutive_anywhere    as highest,
+       current_consecutive_anywhere      as current,
+       first_event_date, last_event_date
+from analytics.rollup_person_anywhere;
+grant select on analytics.v_person_streaks to reader;

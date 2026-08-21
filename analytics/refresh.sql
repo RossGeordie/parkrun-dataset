@@ -16,6 +16,9 @@ with runs as (
   select parkrun_id, park, event_no, position, time_s,
          age_grade_pct, is_first_timer, is_pb
   from analytics.fact_run
+  where parkrun_id is not null
+    and btrim(coalesce(parkrun_id, '')) <> ''
+    and lower(btrim(coalesce(parkrun_id, ''))) <> 'unknown'
 ),
 flagged as (
   select r.*,
@@ -109,3 +112,169 @@ left join dates fd on fd.park = p.park and fd.event_no = p.first_event_no
 left join dates ld on ld.park = p.park and ld.event_no = p.last_event_no;
 
 analyze analytics.rollup_person_park;
+
+-- ============================================================================
+-- ANYWHERE streak — consecutive ISO weeks (any of the 4 parks) attended.
+-- Consecutive = attended week exactly 7 days after the prior attended week.
+-- Multi-park weeks dedup to one; park hops never break the run.
+-- ============================================================================
+truncate analytics.rollup_person_anywhere;
+
+-- one row per (person, attended ISO week)
+with weeks as (
+  select parkrun_id,
+         (date_trunc('week', event_date))::date as week_start
+  from analytics.fact_run
+  where parkrun_id is not null
+    and btrim(coalesce(parkrun_id, '')) <> ''
+    and lower(btrim(coalesce(parkrun_id, ''))) <> 'unknown'
+  group by parkrun_id, (date_trunc('week', event_date))::date
+),
+flagged as (
+  select parkrun_id, week_start,
+         case when lag(week_start) over (
+                partition by parkrun_id order by week_start
+              ) = week_start - 7
+              then 0 else 1 end as is_break
+  from weeks
+),
+numbered as (
+  select w.*,
+         sum(is_break) over (
+           partition by parkrun_id order by week_start
+           range unbounded preceding
+         ) as streak_id,
+         row_number() over (
+           partition by parkrun_id order by week_start desc
+         ) as seq_desc
+  from flagged w
+),
+streaks_agg as (
+  select parkrun_id, streak_id, count(*) as len,
+         bool_or(seq_desc = 1) as is_current
+  from numbered
+  group by parkrun_id, streak_id
+),
+streaks as (
+  select parkrun_id,
+         max(len) as highest_consecutive_anywhere,
+         max(case when is_current then len end) as current_consecutive_anywhere
+  from streaks_agg
+  group by parkrun_id
+),
+attended as (
+  select parkrun_id,
+         count(*)                            as days_run_anywhere,
+         count(distinct park)                as parks_run,
+         count(distinct (date_trunc('week', event_date))::date) as weeks_run_anywhere,
+         min(event_date::date)               as first_event_date,
+         max(event_date::date)               as last_event_date
+  from analytics.fact_run
+  where parkrun_id is not null
+    and btrim(coalesce(parkrun_id, '')) <> ''
+    and lower(btrim(coalesce(parkrun_id, ''))) <> 'unknown'
+  group by parkrun_id
+)
+insert into analytics.rollup_person_anywhere (
+  parkrun_id, name, gender, club,
+  days_run_anywhere, parks_run, weeks_run_anywhere,
+  first_event_date, last_event_date,
+  highest_consecutive_anywhere, current_consecutive_anywhere
+)
+select a.parkrun_id, d.name, d.gender, d.club,
+  a.days_run_anywhere, a.parks_run, a.weeks_run_anywhere,
+  a.first_event_date, a.last_event_date,
+  s.highest_consecutive_anywhere, s.current_consecutive_anywhere
+from attended a
+join analytics.dim_person d on d.parkrun_id = a.parkrun_id
+join streaks        s       on s.parkrun_id = a.parkrun_id;
+
+analyze analytics.rollup_person_anywhere;
+
+-- ============================================================================
+-- DEDICATED streak — consecutive HELD event-weeks attended (any of the 4 parks).
+-- A HELD week = an ISO week in which >=1 park held a parkrun. The HELD-week
+-- sequence is numbered 1..N (ordinals), so attending ordinals {2,3,4,5} is a
+-- 4-run and {9,10} is a 2-run, even if 6,7,8 were HELD weeks the person missed.
+-- Cancellation weeks (no park ran -> no ordinal) never break the run.
+-- Same gap-method single pass as anywhere/per-park, O(n log n).
+-- ============================================================================
+truncate analytics.rollup_person_dedicated;
+
+-- HELD week ordinal: 1 row per distinct event week, in date order.
+with held_weeks as (
+  select (date_trunc('week', wk))::date as week,
+         row_number() over (order by (date_trunc('week', wk))::date) as ord
+  from (
+    select distinct (date_trunc('week', event_date))::date as wk
+    from parkrun.event_history
+  ) ew
+),
+attended as (
+  -- attended HELD weeks per person (distinct; a multi-park week is one ordinal)
+  select distinct f.parkrun_id, h.ord
+  from analytics.fact_run f
+  join held_weeks h on h.week = (date_trunc('week', f.event_date))::date
+  where f.parkrun_id is not null
+    and btrim(coalesce(f.parkrun_id, '')) <> ''
+    and lower(btrim(coalesce(f.parkrun_id, ''))) <> 'unknown'
+),
+flagged as (
+  select parkrun_id, ord,
+         case when lag(ord) over (
+                partition by parkrun_id order by ord
+              ) = ord - 1
+              then 0 else 1 end as is_break
+  from attended
+),
+numbered as (
+  select parkrun_id, ord,
+         sum(is_break) over (
+           partition by parkrun_id order by ord
+           range unbounded preceding
+         ) as streak_id,
+         row_number() over (
+           partition by parkrun_id order by ord desc
+         ) as seq_desc
+  from flagged
+),
+streaks_agg as (
+  select parkrun_id, streak_id, count(*) as len,
+         bool_or(seq_desc = 1) as is_current
+  from numbered
+  group by parkrun_id, streak_id
+),
+streaks as (
+  select parkrun_id,
+         max(len) as highest_consecutive_dedicated,
+         max(case when is_current then len end) as current_consecutive_dedicated
+  from streaks_agg
+  group by parkrun_id
+),
+attended_stats as (
+  select parkrun_id,
+         count(distinct (date_trunc('week', event_date))::date) as attended_event_weeks,
+         count(distinct park) as parks_run,
+         min(event_date::date) as first_event_date,
+         max(event_date::date) as last_event_date
+  from analytics.fact_run
+  where parkrun_id is not null
+    and btrim(coalesce(parkrun_id, '')) <> ''
+    and lower(btrim(coalesce(parkrun_id, ''))) <> 'unknown'
+  group by parkrun_id
+)
+insert into analytics.rollup_person_dedicated (
+  parkrun_id, name, gender, club,
+  attended_event_weeks, parks_run,
+  first_event_date, last_event_date,
+  highest_consecutive_dedicated, current_consecutive_dedicated
+)
+select a.parkrun_id, d.name, d.gender, d.club,
+  a.attended_event_weeks, a.parks_run,
+  a.first_event_date, a.last_event_date,
+  s.highest_consecutive_dedicated, s.current_consecutive_dedicated
+from attended_stats a
+join analytics.dim_person d on d.parkrun_id = a.parkrun_id
+join streaks        s       on s.parkrun_id = a.parkrun_id;
+
+analyze analytics.rollup_person_dedicated;
