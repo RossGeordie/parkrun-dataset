@@ -6,9 +6,9 @@
 
 ## What this is
 
-A production pipeline that scrapes parkrun results and volunteer records
-for multiple parks, stores them in PostgreSQL, and serves them through
-open-source BI — no proprietary Microsoft stack.
+A production pipeline that reads parkrun results and volunteer records
+for multiple parks, stores them in PostgreSQL database, and serves them through
+open-source BI — no proprietary stack.
 
 ## What's in this repo
 
