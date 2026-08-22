@@ -10,6 +10,11 @@ A production pipeline that reads parkrun results and volunteer records
 for multiple parks, stores them in PostgreSQL database, and serves them through
 open-source BI — no proprietary stack.
 
+The purpose of this project was twofold, firstly to prove that open source analytics
+was mature enough to be a viable alternative to using paid solutions like Power
+BI or Tableau and secondly to prove that Local AI was a capable tool. This entire
+Repo has been written and created by our latest local AI implementation - "Sooty".
+
 ## What's in this repo
 
 ```
