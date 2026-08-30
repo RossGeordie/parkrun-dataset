@@ -184,18 +184,21 @@ def clean(s):
 
 # ------------------------------------------------------------- scraping
 async def scrape_event_history(ctx, park):
-    page = await ctx.new_page()
-    await page.goto(EVENTHISTORY.format(park=park), wait_until="domcontentloaded", timeout=45000)
-    await page.wait_for_selector("table tbody tr", timeout=30000)
-    rows = await page.evaluate(
-        """() => [...document.querySelectorAll('table tbody tr')].map(tr => {
+    page = await _open_event_page(ctx, EVENTHISTORY.format(park=park))
+    try:
+        rows = await page.evaluate(
+            """() => [...document.querySelectorAll('table tbody tr')].map(tr => {
             const c = [...tr.querySelectorAll('td')].map(td => td.innerText.trim().replace(/\\n/g,' '));
             const a = tr.querySelector('a[href]');
             const href = a ? a.getAttribute('href') : null;
-            return {cells: c, href, name: a ? a.innerHTML.match(/parkrunner\\/(\\d+)/) : null};
-        })"""
-    )
-    await page.close()
+            return {cells: c, href, name: a ? a.innerHTML.match(/parkrunner\\/(\d+)/) : null};
+            })"""
+        )
+    finally:
+        try:
+            await page.close()
+        except Exception:
+            pass
 
     events = []
     for r in rows:
@@ -237,24 +240,24 @@ def _num(pattern, text):
     return int(m.group(1)) if m else None
 
 
-async def _open_event_page(ctx, park, event_no, timeout_ms=30000, retries=3):
-    """Navigate to the event detail page, wait for the results table.
-    parkrun detail pages intermittently stall on first paint.
+async def _open_event_page(ctx, url, selector="table tbody tr", timeout_ms=30000, retries=3):
+    """Navigate to a parkrun page and wait for a selector.
+    parkrun pages intermittently stall on first paint.
     Retry with linear backoff; close failed pages so ctx does not leak.
     """
-    import asyncio
+    import asyncio, urllib.parse
     last = None
+    label = urllib.parse.urlparse(url).path.rsplit("/", 1)[-1] or "page"
     for attempt in range(1, retries + 1):
         page = await ctx.new_page()
         try:
-            await page.goto(EVENT_PAGE.format(park=park, num=event_no),
-                            wait_until="domcontentloaded", timeout=45000)
-            await page.wait_for_selector("table tbody tr", timeout=timeout_ms)
+            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            await page.wait_for_selector(selector, timeout=timeout_ms)
             return page
         except Exception as e:
             last = e
             if attempt < retries:
-                print(f"  [retry {attempt}/{retries}] event #{event_no}: "
+                print(f"  [retry {attempt}/{retries}] {label}: "
                       f"{type(e).__name__}: {str(e)[:90]}", flush=True)
                 await asyncio.sleep(1.5 * attempt)
             else:
@@ -266,7 +269,8 @@ async def _open_event_page(ctx, park, event_no, timeout_ms=30000, retries=3):
 
 
 async def scrape_event_detail(ctx, park, event_no, timeout_ms=30000):
-    page = await _open_event_page(ctx, park, event_no, timeout_ms)
+    page = await _open_event_page(ctx, EVENT_PAGE.format(park=park, num=event_no),
+                                  timeout_ms=timeout_ms)
     try:
         await page.evaluate(
             """() => {
