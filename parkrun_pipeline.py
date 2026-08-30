@@ -237,12 +237,39 @@ def _num(pattern, text):
     return int(m.group(1)) if m else None
 
 
+async def _open_event_page(ctx, park, event_no, timeout_ms=30000, retries=3):
+    """Navigate to the event detail page, wait for the results table.
+    parkrun detail pages intermittently stall on first paint.
+    Retry with linear backoff; close failed pages so ctx does not leak.
+    """
+    import asyncio
+    last = None
+    for attempt in range(1, retries + 1):
+        page = await ctx.new_page()
+        try:
+            await page.goto(EVENT_PAGE.format(park=park, num=event_no),
+                            wait_until="domcontentloaded", timeout=45000)
+            await page.wait_for_selector("table tbody tr", timeout=timeout_ms)
+            return page
+        except Exception as e:
+            last = e
+            if attempt < retries:
+                print(f"  [retry {attempt}/{retries}] event #{event_no}: "
+                      f"{type(e).__name__}: {str(e)[:90]}", flush=True)
+                await asyncio.sleep(1.5 * attempt)
+            else:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+    raise last
+
+
 async def scrape_event_detail(ctx, park, event_no, timeout_ms=30000):
-    page = await ctx.new_page()
-    await page.goto(EVENT_PAGE.format(park=park, num=event_no), wait_until="domcontentloaded", timeout=45000)
-    await page.wait_for_selector("table tbody tr", timeout=timeout_ms)
-    await page.evaluate(
-        """() => {
+    page = await _open_event_page(ctx, park, event_no, timeout_ms)
+    try:
+        await page.evaluate(
+            """() => {
           for (const cls of ['js-ResultsSelect','js-VolunteersSelect']) {
             for (const s of [...document.querySelectorAll('select.' + cls)]) {
               if ([...s.options].some(o => o.value === 'detailed')) {
@@ -254,9 +281,9 @@ async def scrape_event_detail(ctx, park, event_no, timeout_ms=30000):
           }
           return true;
         }"""
-    )
-    await page.wait_for_timeout(2500)
-    data = await page.evaluate(
+        )
+        await page.wait_for_timeout(2500)
+        data = await page.evaluate(
         """() => {
           const tables = [...document.querySelectorAll('table')];
           const fin = tables.find(t => /POSITION/.test((t.querySelector('thead')?.innerText)||''));
@@ -273,8 +300,12 @@ async def scrape_event_detail(ctx, park, event_no, timeout_ms=30000):
           }) : null;
           return {finishers: grab(fin), volunteers: grab(vol)};
         }"""
-    )
-    await page.close()
+        )
+    finally:
+        try:
+            await page.close()
+        except Exception:
+            pass
 
     finishers, volunteers = [], []
 
@@ -399,7 +430,10 @@ async def run_park(pw, park, mode, max_events=None):
         # 1) event history
         events = await scrape_event_history(ctx, park)
         print(f"event history: {len(events)} events  (#{events[-1]['event_no']} .. #{events[0]['event_no']})")
-        if mode in ("init", "history"):
+        if events:
+            # Always upsert the scraped event history: counts/dates can change
+            # for already-seen events (re-counts, firsts corrections), so even a
+            # fully-caught-up day refreshes the table.
             load_events(cur, park, events)
             conn.commit()
             cur.execute("SELECT COUNT(*) FROM parkrun.event_history WHERE park=%s", (park,))
@@ -412,16 +446,37 @@ async def run_park(pw, park, mode, max_events=None):
 
         # 2) target selection by mode
         if mode == "new":
-            cur.execute("SELECT DISTINCT event_no FROM parkrun.finishers WHERE park=%s", (park,))
-            done = {r[0] for r in cur.fetchall()}
-            targets = [e for e in events if e["event_no"] not in done]
+            # "Already seen" = BOTH detail tables have at least one row for the
+            # event. Anything on the website that fails that check is a
+            # (re)scrape target: a newly-listed event, or an older event whose
+            # detail rows were later purged. load_detail is delete-then-insert
+            # for its target events, so a whole-event purge self-heals on the
+            # next run; events complete in both tables are left untouched, so a
+            # manual single-row removal on an otherwise-complete event is kept.
+            cur.execute("SELECT event_no FROM parkrun.finishers WHERE park=%s", (park,))
+            fin = {r[0] for r in cur.fetchall()}
+            cur.execute("SELECT event_no FROM parkrun.volunteers WHERE park=%s", (park,))
+            vol = {r[0] for r in cur.fetchall()}
+            complete = fin & vol
+            seen  = fin | vol
+            healed = [e["event_no"] for e in events if e["event_no"] in seen
+                      and e["event_no"] not in complete]
+            new    = [e["event_no"] for e in events if e["event_no"] not in seen]
+            targets = [e for e in events
+                       if e["event_no"] in (set(new + healed))]
             if targets:
+                nos = [e["event_no"] for e in targets]
+                print(f"new mode: {len(targets)} events to (re)scrape  "
+                      f"(#{min(nos)} .. #{max(nos)})")
+                if new:
+                    print(f"  new events: {sorted(new)}")
+                if healed:
+                    print(f"  healed (purged/stale re-scrape): {sorted(healed)}")
                 load_events(cur, park, targets)
                 conn.commit()
-                nos = [e["event_no"] for e in targets]
-                print(f"new mode: {len(targets)} new events  (#{min(nos)} .. #{max(nos)})")
             else:
-                print("new mode: no new events (all scraped events already have finisher rows)")
+                print("new mode: no new events and nothing to heal "
+                      f"(all {len(events)} scraped events have finisher+volunteer rows)")
                 return 0, 0
         elif mode == "backfill":
             cur.execute("SELECT DISTINCT event_no FROM parkrun.finishers WHERE park=%s", (park,))
