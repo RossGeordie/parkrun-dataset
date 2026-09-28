@@ -1,13 +1,18 @@
 
-
 __pycache__/
 *.py[cod]
 *.so
 *.egg-info/
+.eggs/
 dist/
 build/
 venv/
 .venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
 
 *.xlsx
 *.xls
@@ -16,9 +21,12 @@ venv/
 data/
 *.csv
 *.parquet
+token_export*.json
 
 .env
 .env.local
+*.suppw
+secrets/
 
 .idea/
 .vscode/
@@ -26,3 +34,21 @@ data/
 .DS_Store
 Thumbs.db
 local_config.yaml
+
+# One-off Superset / BI scratch scripts & local dumps (NOT part of the public pipeline)
+/bi/
+/_*.py
+*/_*.py
+dump*.py
+diag_*.py
+sq_probe.py
+ds_detail.py
+*/sq_probe.py
+*/ds_detail.py
+*/dump*.py
+*/diag_*.py
+
+# Report build scratch
+/reports/.work/
+newcastle-marshals.html.tmp
+*.partial

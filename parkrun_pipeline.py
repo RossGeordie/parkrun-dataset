@@ -191,7 +191,7 @@ async def scrape_event_history(ctx, park):
             const c = [...tr.querySelectorAll('td')].map(td => td.innerText.trim().replace(/\\n/g,' '));
             const a = tr.querySelector('a[href]');
             const href = a ? a.getAttribute('href') : null;
-            return {cells: c, href, name: a ? a.innerHTML.match(/parkrunner\\/(\d+)/) : null};
+            return {cells: c, href, name: a ? a.innerHTML.match(/parkrunner\\/(\\d+)/) : null};
             })"""
         )
     finally:
@@ -245,7 +245,8 @@ async def _open_event_page(ctx, url, selector="table tbody tr", timeout_ms=30000
     parkrun pages intermittently stall on first paint.
     Retry with linear backoff; close failed pages so ctx does not leak.
     """
-    import asyncio, urllib.parse
+    import asyncio
+    import urllib.parse
     last = None
     label = urllib.parse.urlparse(url).path.rsplit("/", 1)[-1] or "page"
     for attempt in range(1, retries + 1):
